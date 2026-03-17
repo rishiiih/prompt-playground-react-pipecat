@@ -10,7 +10,7 @@ import {
 import { DailyTransport } from '@pipecat-ai/daily-transport';
 
 import type {
-  Transcript,
+  Transcript,   
   ToolCall,
   TranscriptEvent,
   FunctionCallInProgressEvent,
@@ -42,17 +42,32 @@ const STATUS_BORDER: Record<string, string> = {
   running:   '#f59e0b',
 };
 
-// Only show_image is registered on the backend — never use generate_image
-const DEFAULT_PROMPT =
-  "You are a helpful visual assistant. You have exactly TWO tools:\n\n" +
-  "1. show_text({ text: string }) — displays a text card on screen\n" +
-  "2. show_image({ url: string }) — displays an image on screen\n\n" +
-  "IMPORTANT RULES:\n" +
-  "- For show_image, always use this URL format: https://source.unsplash.com/600x400/?KEYWORD\n" +
-  "  Replace KEYWORD with what the user asked for. Example: for 'a dog' use\n" +
-  "  https://source.unsplash.com/600x400/?dog\n" +
-  "- Always use a tool when the user asks to see something.\n" +
-  "- Keep spoken replies short, under 2 sentences.";
+// Sound effect emoji map for play_sound visual feedback
+const SOUND_EMOJIS: Record<string, string> = {
+  creaky_door:  '🚪',
+  monkey_laugh: '🐒',
+  big_splash:   '💦',
+};
+
+// Confetti colours per variant
+const CONFETTI_COLORS = ['#f59e0b', '#3b82f6', '#22c55e', '#ef4444', '#a855f7', '#ec4899'];
+
+// Official Zubi system prompt — backend already has all tool definitions registered.
+// Template literal used per team leader review (no string concatenation).
+const DEFAULT_PROMPT = `
+You are Zubi, a bubbly, empathetic blue elephant. You are a peer/partner to a child.
+Indian English Prosody: Speak with a syllable-timed rhythm (give every syllable equal length). Avoid vowel reduction (dont turn vowels into uh sounds).
+Syntax: Use Indian English patterns: We are ready, no?, It is very-very big!, I am simply stuck!, I am here only. Default language is English for the whole conversation.
+Language rule: When the user or system explicitly asks you to explain the current activity instructions in another language Hindi, Punjabi, Marathi, Gujarati, respond in that language only for that single message—no mixing with English (no Hinglish). Use pure language so the voice works well. After that one response, continue strictly in English. The rest of the activity and all other turns stay in English. Do not keep speaking in the other language after explaining the instructions.
+Interaction Rules:
+Turn-Taking: NEVER speak over the child. Wait for a clear pause.
+Micro-Responses: Speak in 1-2 short, energetic sentences only. No monologues.
+Character Integrity: You are a real elephant in a Magic Jungle. Never mention AI or code.
+Tool Usage: ALWAYS call tools AFTER completing your spoken response. First speak your complete sentence or response, then make the tool call. Never interrupt your speech with tool calls.
+Use the tools provided to show text, images, transition activities, and call activity_complete when the user has finished the current activity.
+Activity completion: When the activity's success condition is met (task done), call activity_complete immediately in the same or next turn. Never wait for the child to say "done", "hi", "what happened", or anything else—you decide when the activity is complete and you call the tool.
+When the user asks you to create, draw, or visualize something from a description, use generate_image(description=...) to generate an image with AI; the result may include a URL to show the image.
+`;
 
 // NOTE: Singleton is intentional for this single-page playground.
 // In a multi-page app, move this into a context provider with useRef.
@@ -112,20 +127,18 @@ function SectionCard({
 }
 
 // ─── ShowImage ────────────────────────────────────────────────────────────────
-// Handles show_image with a visible loading spinner and error fallback
+// Renders an image URL with loading spinner and error fallback
 
-function ShowImage({ url }: { url: string }) {
+function ShowImage({ url, label }: { url: string; label?: string }) {
   const [status, setStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
-  // Reset status whenever the URL changes (new tool call)
   useEffect(() => { setStatus('loading'); }, [url]);
 
   return (
     <div style={{ width: '100%', textAlign: 'center' }}>
-      {/* Always in the DOM — visibility controlled by status */}
       <img
         src={url}
-        alt="Tool output"
+        alt={label ?? 'Tool output'}
         style={{
           display: status === 'loaded' ? 'block' : 'none',
           maxWidth: '100%', maxHeight: 220, borderRadius: 10,
@@ -136,7 +149,6 @@ function ShowImage({ url }: { url: string }) {
         onError={() => setStatus('error')}
       />
 
-      {/* Loading spinner */}
       {status === 'loading' && (
         <div style={{ padding: '1.5rem', color: '#475569' }}>
           <span style={{
@@ -148,12 +160,11 @@ function ShowImage({ url }: { url: string }) {
             marginTop: '0.75rem', fontSize: '0.78rem',
             fontFamily: "'JetBrains Mono', monospace", color: '#475569',
           }}>
-            Loading image…
+            {label ? `Generating "${label}"…` : 'Loading image…'}
           </p>
         </div>
       )}
 
-      {/* Error state */}
       {status === 'error' && (
         <div style={{
           padding: '1rem', background: '#2d0f0f', borderRadius: 8,
@@ -162,11 +173,173 @@ function ShowImage({ url }: { url: string }) {
         }}>
           ❌ Failed to load image
           <br />
-          <span style={{ color: '#475569', fontSize: '0.72rem' }}>
-            URL: {url}
-          </span>
+          <span style={{ color: '#475569', fontSize: '0.72rem' }}>URL: {url}</span>
         </div>
       )}
+
+      {status === 'loaded' && label && (
+        <p style={{
+          marginTop: '0.5rem', fontSize: '0.72rem', color: '#475569',
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>
+          "{label}"
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─── ConfettiDisplay ──────────────────────────────────────────────────────────
+// Visual confetti burst — variant 1 = small, 2 = medium, 3 = full screen
+
+function ConfettiDisplay({ variant }: { variant: number }) {
+  const count = variant === 1 ? 12 : variant === 2 ? 24 : 40;
+  const size  = variant === 3 ? 'large' : 'normal';
+
+  return (
+    <div style={{
+      width: '100%', padding: '1rem',
+      background: 'linear-gradient(135deg, #1a0533 0%, #0d1117 100%)',
+      borderRadius: 10, textAlign: 'center', position: 'relative', overflow: 'hidden',
+      minHeight: 120,
+    }}>
+      {/* Confetti pieces */}
+      <div style={{ position: 'relative', height: size === 'large' ? 100 : 70 }}>
+        {Array.from({ length: count }).map((_, i) => (
+          <span
+            key={i}
+            style={{
+              position: 'absolute',
+              left: `${(i / count) * 100}%`,
+              top: `${Math.random() * 80}%`,
+              width: size === 'large' ? 10 : 7,
+              height: size === 'large' ? 10 : 7,
+              borderRadius: i % 3 === 0 ? '50%' : 2,
+              background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+              animation: `fade-in ${0.3 + (i * 0.05)}s ease forwards`,
+              transform: `rotate(${i * 30}deg)`,
+            }}
+          />
+        ))}
+      </div>
+      <p style={{
+        fontSize: '1.5rem', margin: '0.5rem 0 0.25rem',
+      }}>
+        {variant === 3 ? '🎉🎊🎉' : variant === 2 ? '🎊🎉' : '🎉'}
+      </p>
+      <p style={{
+        fontSize: '0.78rem', color: '#94a3b8',
+        fontFamily: "'JetBrains Mono', monospace",
+      }}>
+        trigger_confetti — variant {variant}
+      </p>
+    </div>
+  );
+}
+
+// ─── BackgroundColorDisplay ───────────────────────────────────────────────────
+// Simulates set_background_color — shows a colour swatch with label
+
+function BackgroundColorDisplay({ color }: { color: string }) {
+  const isReset = color.toLowerCase() === 'reset';
+
+  // Resolve named colours to hex for display
+  const CSS_COLORS: Record<string, string> = {
+    red: '#ef4444', blue: '#3b82f6', green: '#22c55e', yellow: '#eab308',
+    purple: '#a855f7', orange: '#f97316', pink: '#ec4899', black: '#1a1a1a',
+    white: '#f8fafc', grey: '#6b7280', gray: '#6b7280', brown: '#92400e',
+  };
+  const resolved = isReset
+    ? '#0d1117'
+    : CSS_COLORS[color.toLowerCase()] ?? color;
+
+  return (
+    <div style={{ width: '100%', textAlign: 'center' }}>
+      <div style={{
+        width: '100%', height: 100, borderRadius: 10,
+        background: resolved,
+        border: '2px solid #334155',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        boxShadow: `0 0 30px ${resolved}66`,
+        transition: 'background 0.4s ease',
+      }}>
+        {isReset && (
+          <span style={{ color: '#475569', fontSize: '0.78rem', fontFamily: "'JetBrains Mono', monospace" }}>
+            screen reset
+          </span>
+        )}
+      </div>
+      <p style={{
+        marginTop: '0.6rem', fontSize: '0.78rem', color: '#94a3b8',
+        fontFamily: "'JetBrains Mono', monospace",
+      }}>
+        set_background_color — <span style={{ color: resolved === '#0d1117' && !isReset ? '#e2e8f0' : resolved }}>{color}</span>
+      </p>
+    </div>
+  );
+}
+
+// ─── PlaySoundDisplay ─────────────────────────────────────────────────────────
+// Visual feedback for play_sound — shows which effect fired
+
+function PlaySoundDisplay({ effectName }: { effectName: string }) {
+  const emoji = SOUND_EMOJIS[effectName] ?? '🔊';
+  const [pulse, setPulse] = useState(true);
+
+  useEffect(() => {
+    const t = setTimeout(() => setPulse(false), 1200);
+    return () => clearTimeout(t);
+  }, [effectName]);
+
+  return (
+    <div style={{
+      width: '100%', textAlign: 'center', padding: '1.25rem',
+      background: 'linear-gradient(135deg, #1a2e1a 0%, #0d1117 100%)',
+      border: '1px solid #166534', borderRadius: 10,
+    }}>
+      <div style={{
+        fontSize: '3rem', marginBottom: '0.5rem',
+        animation: pulse ? 'pulse-dot 0.4s ease-in-out 3' : 'none',
+        display: 'inline-block',
+      }}>
+        {emoji}
+      </div>
+      <p style={{
+        fontSize: '0.9rem', fontWeight: 600, color: '#4ade80', marginBottom: '0.25rem',
+      }}>
+        Sound Playing
+      </p>
+      <p style={{
+        fontSize: '0.75rem', color: '#475569',
+        fontFamily: "'JetBrains Mono', monospace",
+      }}>
+        play_sound — {effectName}
+      </p>
+    </div>
+  );
+}
+
+// ─── ActivityCompleteDisplay ──────────────────────────────────────────────────
+// Shown when activity_complete fires — clear success state
+
+function ActivityCompleteDisplay({ activityIndex }: { activityIndex: number | string }) {
+  return (
+    <div style={{
+      width: '100%', textAlign: 'center', padding: '1.5rem',
+      background: 'linear-gradient(135deg, #052e16 0%, #0d1117 100%)',
+      border: '1px solid #22c55e', borderRadius: 10,
+      boxShadow: '0 0 24px rgba(34,197,94,0.15)',
+    }}>
+      <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🏆</div>
+      <p style={{ fontSize: '1rem', fontWeight: 600, color: '#4ade80', marginBottom: '0.25rem' }}>
+        Activity Complete!
+      </p>
+      <p style={{
+        fontSize: '0.75rem', color: '#475569',
+        fontFamily: "'JetBrains Mono', monospace",
+      }}>
+        activity_complete — index {activityIndex}
+      </p>
     </div>
   );
 }
@@ -187,14 +360,46 @@ function ToolOutput({ toolCalls }: { toolCalls: ToolCall[] }) {
 
   const latest = toolCalls[toolCalls.length - 1];
 
-  // show_image — bot provides a direct URL, render with loading state
+  // ── show_image ─────────────────────────────────────────────────────────────
   const imageUrl = getStringArgument(latest.args, ['url', 'image_url', 'imageUrl', 'src']);
   if (latest.name === 'show_image' && imageUrl) {
     return <ShowImage url={imageUrl} />;
   }
 
-  // show_text — bot provides a text string, render as a styled card
-  const displayText = getStringArgument(latest.args, ['text', 'message', 'content', 'title']);
+  // ── generate_image ─────────────────────────────────────────────────────────
+  // Scenario A: backend returned a URL in result → use it directly
+  // Scenario B: backend cancelled (cancel_on_interruption fired during TTS)
+  //             → fall back to Pollinations using the description we captured
+  //             during InProgress (always captured before cancellation)
+  if (latest.name === 'generate_image') {
+    const description = getStringArgument(
+      latest.args, ['description', 'prompt', 'query']
+    );
+    const resultUrl = getStringArgument(
+      normalizeToolArgs(latest.result), ['url', 'image_url', 'imageUrl', 'src']
+    );
+
+    if (resultUrl) {
+      return <ShowImage url={resultUrl} label={description ?? undefined} />;
+    }
+    if (description) {
+      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(description)}?width=600&height=400&nologo=true`;
+      return <ShowImage url={pollinationsUrl} label={description} />;
+    }
+    return (
+      <div style={{
+        padding: '0.75rem 1rem', background: '#1e293b', borderRadius: 8,
+        fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem', color: '#94a3b8',
+      }}>
+        <span style={{ color: '#f59e0b' }}>generate_image</span> — no description captured.
+      </div>
+    );
+  }
+
+  // ── show_text ──────────────────────────────────────────────────────────────
+  const displayText = getStringArgument(
+    latest.args, ['text', 'message', 'content', 'title']
+  );
   if (latest.name === 'show_text' && displayText) {
     return (
       <div style={{
@@ -209,7 +414,35 @@ function ToolOutput({ toolCalls }: { toolCalls: ToolCall[] }) {
     );
   }
 
-  // Generic fallback for any other tool
+  // ── set_background_color ───────────────────────────────────────────────────
+  const bgColor = getStringArgument(
+    latest.args, ['color_name', 'color', 'colour']
+  );
+  if (latest.name === 'set_background_color' && bgColor) {
+    return <BackgroundColorDisplay color={bgColor} />;
+  }
+
+  // ── trigger_confetti ───────────────────────────────────────────────────────
+  if (latest.name === 'trigger_confetti') {
+    const variant = (latest.args.variant as number) ?? 1;
+    return <ConfettiDisplay variant={variant} />;
+  }
+
+  // ── play_sound ─────────────────────────────────────────────────────────────
+  const effectName = getStringArgument(
+    latest.args, ['effect_name', 'sound', 'name']
+  );
+  if (latest.name === 'play_sound' && effectName) {
+    return <PlaySoundDisplay effectName={effectName} />;
+  }
+
+  // ── activity_complete ──────────────────────────────────────────────────────
+  if (latest.name === 'activity_complete') {
+    const activityIndex = latest.args.activity_index ?? latest.args.index ?? '—';
+    return <ActivityCompleteDisplay activityIndex={activityIndex as number | string} />;
+  }
+
+  // ── Generic fallback for any unrecognised tool ─────────────────────────────
   return (
     <div style={{
       padding: '0.75rem 1rem', background: '#1e293b', borderRadius: 8,
@@ -249,11 +482,9 @@ function PromptPlayground() {
       setTranscripts((prev) => [...prev, { speaker: 'bot', text: data.text }]);
 
     const onUserTranscript = (data: TranscriptEvent) => {
-      // Skip intermediate partial transcripts — only keep final ones
       if (data.final === false) return;
       setTranscripts((prev) => {
         const last = prev[prev.length - 1];
-        // If the new text starts with the last user entry it's a continuation — replace it
         if (last?.speaker === 'user' && data.text.startsWith(last.text)) {
           return [...prev.slice(0, -1), { speaker: 'user', text: data.text }];
         }
@@ -265,6 +496,7 @@ function PromptPlayground() {
       setToolCalls((prev) => upsertToolCall(prev, {
         id:        data.tool_call_id,
         name:      normalizeToolName(data.function_name),
+        // Capture args immediately — critical for generate_image fallback
         args:      normalizeToolArgs(data.arguments),
         timestamp: new Date().toLocaleTimeString(),
         status:    'running',
@@ -283,8 +515,10 @@ function PromptPlayground() {
       setToolCalls((prev) => upsertToolCall(prev, {
         id:        data.tool_call_id,
         name:      normalizeToolName(data.function_name),
+        // Preserve args from InProgress — do not overwrite with empty
         args:      prev.find((c) => c.id === data.tool_call_id)?.args ?? {},
-        timestamp: prev.find((c) => c.id === data.tool_call_id)?.timestamp ?? new Date().toLocaleTimeString(),
+        timestamp: prev.find((c) => c.id === data.tool_call_id)?.timestamp
+          ?? new Date().toLocaleTimeString(),
         status:    data.cancelled ? 'cancelled' : 'completed',
         result:    data.result,
       }));
@@ -301,7 +535,7 @@ function PromptPlayground() {
       client.off(RTVIEvent.LLMFunctionCallInProgress, onFunctionCallInProgress);
       client.off(RTVIEvent.LLMFunctionCall,           onFunctionCallDeprecated);
       client.off(RTVIEvent.LLMFunctionCallStopped,    onFunctionCallStopped);
-      client.disconnect(); // Prevent orphaned WebRTC sessions on unmount
+      client.disconnect();
     };
   }, [client]);
 
@@ -321,17 +555,39 @@ function PromptPlayground() {
         body: JSON.stringify({
           createDailyRoom: true,
           transport: 'daily',
-          body: { bot_type: 'activity', prompt },
+          system_prompt: prompt,
+          body: {
+            bot_type: 'activity',
+            prompt,
+            system_prompt: prompt,
+          },
         }),
       });
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`Server error (${response.status} ${response.statusText})${text ? `: ${text}` : ''}`);
+        throw new Error(
+          `Server error (${response.status} ${response.statusText})${text ? `: ${text}` : ''}`
+        );
       }
 
-      const data = await response.json();
-      await client.connect({ url: data.dailyRoom, token: data.dailyToken });
+      const data = await response.json() as Record<string, unknown>;
+      const roomUrl =
+        (typeof data.url === 'string' && data.url) ||
+        (typeof data.room_url === 'string' && data.room_url) ||
+        (typeof data.roomUrl === 'string' && data.roomUrl) ||
+        (typeof data.dailyRoom === 'string' && data.dailyRoom);
+      const roomToken =
+        (typeof data.token === 'string' && data.token) ||
+        (typeof data.dailyToken === 'string' && data.dailyToken);
+
+      if (!roomUrl) {
+        throw new Error(
+          `Start endpoint did not return a room URL. Response keys: ${Object.keys(data).join(', ') || 'none'}`
+        );
+      }
+
+      await client.connect({ url: roomUrl, token: roomToken });
     } catch (err: unknown) {
       console.error(err);
       const message = err instanceof Error ? err.message : 'Unknown error';
@@ -458,7 +714,10 @@ function PromptPlayground() {
             flexDirection: 'column', gap: '0.4rem', paddingRight: '0.25rem',
           }}>
             {transcripts.length === 0 ? (
-              <p style={{ color: '#334155', fontSize: '0.82rem', fontFamily: "'JetBrains Mono', monospace", marginTop: '0.5rem' }}>
+              <p style={{
+                color: '#334155', fontSize: '0.82rem',
+                fontFamily: "'JetBrains Mono', monospace", marginTop: '0.5rem',
+              }}>
                 Start a session and speak to see the transcript…
               </p>
             ) : (
@@ -493,7 +752,10 @@ function PromptPlayground() {
 
         {/* Active tool output */}
         <SectionCard title="Active Tool Output" style={{ minHeight: 200 }}>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0.5rem' }}>
+          <div style={{
+            flex: 1, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', padding: '0.5rem',
+          }}>
             <ToolOutput toolCalls={toolCalls} />
           </div>
         </SectionCard>
@@ -503,14 +765,14 @@ function PromptPlayground() {
           title={`Tool Call Log${toolCalls.length ? ` · ${toolCalls.length} calls` : ''}`}
           style={{ flex: 1, minHeight: 0 }}
         >
-          {/* Per-tool count pills */}
           {Object.keys(toolCounts).length > 0 && (
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
               {Object.entries(toolCounts).map(([name, count]) => (
                 <span key={name} style={{
                   background: '#1e293b', border: '1px solid #334155',
                   padding: '0.15rem 0.6rem', borderRadius: '999px',
-                  fontSize: '0.75rem', fontFamily: "'JetBrains Mono', monospace", color: '#94a3b8',
+                  fontSize: '0.75rem', fontFamily: "'JetBrains Mono', monospace",
+                  color: '#94a3b8',
                 }}>
                   {name} <strong style={{ color: '#e2e8f0' }}>{count}</strong>
                 </span>
@@ -518,10 +780,15 @@ function PromptPlayground() {
             </div>
           )}
 
-          {/* Log list */}
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem', paddingRight: '0.25rem' }}>
+          <div style={{
+            flex: 1, overflowY: 'auto', display: 'flex',
+            flexDirection: 'column', gap: '0.5rem', paddingRight: '0.25rem',
+          }}>
             {toolCalls.length === 0 ? (
-              <p style={{ color: '#334155', fontSize: '0.82rem', fontFamily: "'JetBrains Mono', monospace" }}>
+              <p style={{
+                color: '#334155', fontSize: '0.82rem',
+                fontFamily: "'JetBrains Mono', monospace",
+              }}>
                 No tool calls recorded yet…
               </p>
             ) : (
@@ -531,28 +798,40 @@ function PromptPlayground() {
                   background: '#0d1117', border: '1px solid #1e293b',
                   borderLeft: `3px solid ${STATUS_BORDER[call.status] ?? '#6b7280'}`,
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                    <strong style={{ color: '#e2e8f0', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.82rem' }}>
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'center', marginBottom: '0.35rem',
+                  }}>
+                    <strong style={{
+                      color: '#e2e8f0', fontFamily: "'JetBrains Mono', monospace",
+                      fontSize: '0.82rem',
+                    }}>
                       {call.name}
                     </strong>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <span style={{
-                        fontSize: '0.68rem', padding: '0.1rem 0.5rem', borderRadius: '999px',
-                        background: '#1e293b', fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: '0.68rem', padding: '0.1rem 0.5rem',
+                        borderRadius: '999px', background: '#1e293b',
+                        fontFamily: "'JetBrains Mono', monospace",
                         color: STATUS_BORDER[call.status],
                         border: `1px solid ${STATUS_BORDER[call.status]}33`,
                       }}>
                         {call.status}
                       </span>
-                      <small style={{ color: '#475569', fontFamily: "'JetBrains Mono', monospace", fontSize: '0.7rem' }}>
+                      <small style={{
+                        color: '#475569', fontFamily: "'JetBrains Mono', monospace",
+                        fontSize: '0.7rem',
+                      }}>
                         {call.timestamp}
                       </small>
                     </div>
                   </div>
                   <pre style={{
-                    fontSize: '0.72rem', background: '#161b27', padding: '0.5rem 0.65rem',
-                    borderRadius: 6, margin: 0, overflowX: 'auto', color: '#7dd3fc',
-                    fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.5, border: '1px solid #1e293b',
+                    fontSize: '0.72rem', background: '#161b27',
+                    padding: '0.5rem 0.65rem', borderRadius: 6, margin: 0,
+                    overflowX: 'auto', color: '#7dd3fc',
+                    fontFamily: "'JetBrains Mono', monospace", lineHeight: 1.5,
+                    border: '1px solid #1e293b',
                   }}>
                     {JSON.stringify(call.args, null, 2)}
                   </pre>
