@@ -136,19 +136,22 @@ function ShowImage({ url, label }: { url: string; label?: string }) {
 
   return (
     <div style={{ width: '100%', textAlign: 'center' }}>
-      <img
-        src={url}
-        alt={label ?? 'Tool output'}
-        style={{
-          display: status === 'loaded' ? 'block' : 'none',
-          maxWidth: '100%', maxHeight: 220, borderRadius: 10,
-          objectFit: 'cover', boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
-          margin: '0 auto',
-        }}
-        onLoad={() => setStatus('loaded')}
-        onError={() => setStatus('error')}
-      />
-
+<img
+  src={url}
+  alt={label ?? 'Tool output'}
+  style={{
+    width: '100%',
+    maxWidth: 400, // ✅ prevents overflow
+    height: 'auto',
+    borderRadius: 10,
+    objectFit: 'cover',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+    margin: '0 auto',
+    display: status === 'loaded' ? 'block' : 'none',
+  }}
+  onLoad={() => setStatus('loaded')}
+  onError={() => setStatus('error')}
+/>
       {status === 'loading' && (
         <div style={{ padding: '1.5rem', color: '#475569' }}>
           <span style={{
@@ -371,30 +374,63 @@ function ToolOutput({ toolCalls }: { toolCalls: ToolCall[] }) {
   // Scenario B: backend cancelled (cancel_on_interruption fired during TTS)
   //             → fall back to Pollinations using the description we captured
   //             during InProgress (always captured before cancellation)
-  if (latest.name === 'generate_image') {
-    const description = getStringArgument(
-      latest.args, ['description', 'prompt', 'query']
-    );
-    const resultUrl = getStringArgument(
-      normalizeToolArgs(latest.result), ['url', 'image_url', 'imageUrl', 'src']
-    );
+if (latest.name === 'generate_image') {
+  const description = getStringArgument(
+    latest.args,
+    ['description', 'prompt', 'query']
+  );
 
-    if (resultUrl) {
-      return <ShowImage url={resultUrl} label={description ?? undefined} />;
-    }
-    if (description) {
-      const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(description)}?width=600&height=400&nologo=true`;
-      return <ShowImage url={pollinationsUrl} label={description} />;
-    }
+  // ✅ Loading state
+  if (latest.status === 'running') {
     return (
-      <div style={{
-        padding: '0.75rem 1rem', background: '#1e293b', borderRadius: 8,
-        fontFamily: "'JetBrains Mono', monospace", fontSize: '0.78rem', color: '#94a3b8',
-      }}>
-        <span style={{ color: '#f59e0b' }}>generate_image</span> — no description captured.
+      <div style={{ textAlign: 'center', color: '#94a3b8' }}>
+        <div
+          style={{
+            display: 'inline-block',
+            width: 24,
+            height: 24,
+            border: '2px solid #1e293b',
+            borderTopColor: '#3b82f6',
+            borderRadius: '50%',
+            animation: 'spin-ring 0.75s linear infinite',
+          }}
+        />
+        <p style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+          Generating your magic pet...
+        </p>
       </div>
     );
   }
+
+  // ✅ Parse result safely
+  let parsedResult = latest.result;
+
+  if (typeof parsedResult === 'string') {
+    try {
+      parsedResult = JSON.parse(parsedResult);
+    } catch {
+      parsedResult = {};
+    }
+  }
+
+  const resultUrl = getStringArgument(
+    normalizeToolArgs(parsedResult),
+    ['url', 'image_url', 'imageUrl', 'src']
+  );
+
+  // ✅ Show image ONLY if available
+  if (resultUrl) {
+    return (
+      <ShowImage
+        url={resultUrl}
+        label={description ?? 'Your magical pet ✨'}
+      />
+    );
+  }
+
+  // ❌ DO NOT show failure immediately
+  return null;
+}
 
   // ── show_text ──────────────────────────────────────────────────────────────
   const displayText = getStringArgument(
@@ -538,6 +574,57 @@ function PromptPlayground() {
       client.disconnect();
     };
   }, [client]);
+
+useEffect(() => {
+  const latest = toolCalls[toolCalls.length - 1];
+  if (!latest) return;
+
+  if (latest.name === 'generate_image' && latest.status === 'completed') {
+    let parsedResult: unknown = latest.result;
+
+    if (typeof parsedResult === 'string') {
+      try {
+        parsedResult = JSON.parse(parsedResult);
+      } catch {
+        parsedResult = {};
+      }
+    }
+
+    const resultRecord =
+      parsedResult && typeof parsedResult === 'object'
+        ? (parsedResult as Record<string, unknown>)
+        : {};
+
+    const imageUrl =
+      resultRecord.url ||
+      resultRecord.image_url ||
+      resultRecord.imageUrl ||
+      resultRecord.src;
+
+    if (!imageUrl) return;
+
+    // 🔊 Force bot speech
+    (client as unknown as { sendTextMessage?: (text: string) => void })?.sendTextMessage?.(
+      "Close your eyes... 3, 2, 1... Open them! Look at your magic pet!"
+    );
+
+    // 🎯 Force activity completion via prompt (WEB FIX)
+    (client as unknown as { sendTextMessage?: (text: string) => void })?.sendTextMessage?.(
+      "Now call the activity_complete tool with activity_index 0"
+    );
+  }
+}, [toolCalls, client]);
+
+useEffect(() => {
+  if (!client) return;
+
+  if (transportState === 'connected') {
+    // 🎯 Kickstart the conversation
+    (client as unknown as { sendTextMessage?: (text: string) => void })?.sendTextMessage?.(
+      "Start the activity by introducing yourself as Zubi and ask the child about their magical pet."
+    );
+  }
+}, [transportState, client]);
 
   // ── Session control ───────────────────────────────────────────────────────────
   const startSession = async () => {
