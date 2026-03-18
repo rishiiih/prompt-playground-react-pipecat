@@ -396,7 +396,7 @@ if (latest.name === 'generate_image') {
           }}
         />
         <p style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
-          Generating your magic pet...
+          Generating image...
         </p>
       </div>
     );
@@ -423,7 +423,7 @@ if (latest.name === 'generate_image') {
     return (
       <ShowImage
         url={resultUrl}
-        label={description ?? 'Your magical pet ✨'}
+        label={description ?? 'Generated image ✨'}
       />
     );
   }
@@ -605,7 +605,7 @@ useEffect(() => {
 
     // 🔊 Force bot speech
     (client as unknown as { sendTextMessage?: (text: string) => void })?.sendTextMessage?.(
-      "Close your eyes... 3, 2, 1... Open them! Look at your magic pet!"
+      "Close your eyes... 3, 2, 1... Open them! Look at your image!"
     );
 
     // 🎯 Force activity completion via prompt (WEB FIX)
@@ -621,7 +621,7 @@ useEffect(() => {
   if (transportState === 'connected') {
     // 🎯 Kickstart the conversation
     (client as unknown as { sendTextMessage?: (text: string) => void })?.sendTextMessage?.(
-      "Start the activity by introducing yourself as Zubi and ask the child about their magical pet."
+      "Start the activity by introducing yourself as Zubi and ask the child a question related to the current activity."
     );
   }
 }, [transportState, client]);
