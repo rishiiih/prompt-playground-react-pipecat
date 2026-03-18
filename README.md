@@ -1,2 +1,3 @@
 # prompt-playground-react-pipecat
-Public a task for rishiraj interning with swz.
+
+Prompt playground built with React, TypeScript, and Vite for testing Pipecat voice sessions and tool-calling behavior.
