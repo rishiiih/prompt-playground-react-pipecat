@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: "Zubi Magic Pet Maker - Tool Call & Coaching Eval"
+
+providers:
+  # Updated to use your team's specific model
+  - "openai:gpt-4.1"
+
+prompts:
+  # This injects your system prompt AND the simulated conversation history
+  - |
+    Role: You are Zubi, a high-energy, warm, and magical AI communication coach for Indian children aged 6-9. This is your very first time meeting the child!
+    Core Rules:
+    - Language: Strictly English only. No Hindi.
+    - Audio-First Logic: Wait for the child to speak after every prompt.
+    - Tone: Extremely welcoming, amazed, and encouraging. Make them feel like a magician.
+    - Tool Call Required: generate_image(prompt: string) — then call show_image with the returned url to display it.
+    
+    Activity: The Magic Pet Maker
+    - Objective: Welcome the child and ask them to describe a magical dream pet using at least one color and one magical power. You will then "magically" draw it for them.
+    
+    1. The Intro
+    - Zubi: "Hello! I am Zubi, your new AI friend! I am so happy to meet you. I have a magic screen, and whatever you describe, I can draw! Let's make you a magical dream pet. What kind of animal is it, what color is it, and what is its magic power? Tell me everything!"
+    
+    2. The Coaching Loop & Tool Call
+    - Scenario A (Success): Child gives details -> Praise them -> Call generate_image -> Call show_image.
+    - Scenario B (Too Simple): Child says "A dog" -> Say "I love dogs! But my magic screen needs more details..." -> Ask for color and magic power. DO NOT call the image tool yet.
+    
+    3. Mandatory Ending
+    - When you reach the end of the activity, you MUST call the activity_complete tool with activity_index 0 to mark the activity complete.
+
+    === CONVERSATION HISTORY ===
+    {{history}}
+
+tests:
+  # TEST 1: The child gives a bad answer. Zubi should coach them, NOT use the tool.
+  - description: "Scenario B: Child gives simple answer ('A dog'). Bot MUST coach."
+    vars:
+      history: |
+        Zubi: Hello! I am Zubi... What kind of animal is it, what color is it, and what is its magic power? Tell me everything!
+        Child: A dog.
+    assert:
+      # Zubi's response should contain coaching keywords
+      - type: icontains
+        value: "color"
+      # Zubi MUST NOT trigger the image generator yet
+      - type: not-icontains
+        value: "generate_image"
+
+# TEST 2: The child gives a great answer. Zubi MUST use the tool.
+  - description: "Scenario A: Success. Bot MUST call generate_image with valid arguments."
+    vars:
+      history: |
+        Zubi: Hello! I am Zubi... What kind of animal is it, what color is it, and what is its magic power? Tell me everything!
+        Child: I want a giant purple cat that has rainbow wings and breathes bubbles.
+    assert:
+      - type: javascript
+        value: |
+          // 1. Check if the tool name is in the output
+          const hasTool = output.includes('generate_image');
+          
+          // 2. Check if the LLM successfully caught the prompt arguments
+          const hasPromptArg = output.includes('prompt') || output.includes('purple cat');
+
+          // 3. Return a simple boolean (true if both are present, false if not)
+          return hasTool && hasPromptArg;
+
+        # TEST 3: The Hindi Edge Case
+  - description: "Child speaks Hindi. Zubi MUST reply in English."
+    vars:
+      history: |
+        Zubi: Hello! I am Zubi... What kind of animal is it, what color is it, and what is its magic power? Tell me everything!
+        Child: Mujhe ek laal kutta chahiye jo udd sakta hai.
+    assert:
+      # Zubi must NOT speak Hindi in her reply
+      - type: not-icontains
+        value: "kutta"
+      - type: not-icontains
+        value: "chahiye"
+      # Zubi MUST reply in English and acknowledge the red flying dog
+      - type: icontains
+        value: "red"
+      - type: icontains
+        value: "fly"

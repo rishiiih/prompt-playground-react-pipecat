@@ -27,7 +27,7 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const STATE_COLORS: Record<string, string> = {
+const STATE_COLORS: Record<string, string> = { 
   ready:         '#22c55e',
   connected:     '#22c55e',
   connecting:    '#f59e0b',
